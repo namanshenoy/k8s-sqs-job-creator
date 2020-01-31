@@ -1,4 +1,4 @@
-ORG=sideshowbandana
+ORG=namanshenoy
 PROJ=k8s-sqs-autoscaler
 VERSION=1.0.1
 
