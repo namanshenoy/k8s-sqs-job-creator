@@ -55,10 +55,12 @@ class SQSPoller:
         sleep(self.options.poll_period)
 
     def scale_up(self):
-        jobs = self.jobs()
-        if len(jobs) < self.options.max_pods:
+        jobs = self.jobs_count()
+        if jobs < self.options.max_pods:
             logger.info("Scaling up")
             self.launch_job()
+        else:
+            logger.info("Max pods reached")
         # deployment = self.deployment()
         # if deployment.spec.replicas < self.options.max_pods:
         #     logger.info("Scaling up")
@@ -81,17 +83,20 @@ class SQSPoller:
         # else:
         #     logger.info("Min pods reached")
 
-    def jobs(self):
+    def jobs_count(self):
         # Get Running Jobs:
         pretty = 'true'
         logger.debug("loading jobs from namespace: {}".format(self.options.kubernetes_namespace))
         # print(self.batch_v1_api.list_namespaced_job(self.options.kubernetes_namespace, pretty=pretty))
         jobs = self.batch_v1_api.list_namespaced_job(self.options.kubernetes_namespace, pretty=pretty)
         if jobs.items == None or len(jobs.items) == 0:
-            return []
+            return 0
         else:
             jobs_running = list(filter(lambda x: x.status.active is not None, jobs.items))
-            return jobs_running
+            jobs_count = 0
+            for j in jobs_running:
+                jobs_count += j.status.active
+            return jobs_count
 
     def deployment(self):
         logger.debug("loading deployment: {} from namespace: {}".format(self.options.kubernetes_deployment, self.options.kubernetes_namespace))
@@ -122,17 +127,19 @@ class SQSPoller:
         for env_name, env_value in env_vars.items():
             env_list.append(client.V1EnvVar(name=env_name, value=env_value))
         # container = client.V1Container(name=container_name, image=container_image, env=env_list, command=["perl",  "-Mbignum=bpi", "-wle", "print bpi(2000)"])
-        container = client.V1Container(name=container_name, image=container_image, env=env_list, image_pull_policy=self.options.image_pull_policy)
+        config_map_ref = client.V1ConfigMapEnvSource(name='aws-config')
+        config_source = [client.V1EnvFromSource(config_map_ref)]
+        container = client.V1Container(name=container_name, image=container_image, env_from=config_source, image_pull_policy=self.options.image_pull_policy)
         template.template.spec = client.V1PodSpec(containers=[container], restart_policy='Never')
         body.spec = client.V1JobSpec(completions=self.options.job_concurrency, parallelism=self.options.job_concurrency, ttl_seconds_after_finished=0, template=template.template)
-        print(body)
+        # print(body)
         return body
 
     def launch_job(self):
         name_prefix = 'pi'
         body = self.create_job_body(container_name=self.options.container_name, container_image=self.options.container_image, env_vars={"VAR": "TESTING"})
         api_response = self.batch_v1_api.create_namespaced_job(self.options.kubernetes_namespace, body=body, pretty=True)
-        print(api_response)
+        # print(api_response)
 
     def run(self):
         options = self.options
